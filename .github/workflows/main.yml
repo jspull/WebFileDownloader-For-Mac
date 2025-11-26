@@ -1,0 +1,76 @@
+name: Build Mac App (Signed DMG)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    # 1. 코드 가져오기
+    - uses: actions/checkout@v3
+
+    # 2. 파이썬 3.10 설정
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # 3. 라이브러리 및 도구 설치
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # 필요한 파이썬 라이브러리 설치
+        pip install playwright pyinstaller tkinterdnd2-universal
+        # Playwright 브라우저 설치 (빌드 과정에는 필요 없어도 실행 환경 구성을 위해 권장)
+        playwright install chromium
+        # DMG 생성 도구 설치 (Homebrew 사용)
+        brew install create-dmg
+
+    # 4. PyInstaller로 앱(.app) 빌드
+    - name: Build with PyInstaller
+      run: |
+        # --windowed: 콘솔창 숨기기
+        # --noconfirm: 덮어쓰기 허용
+        # --clean: 캐시 삭제
+        pyinstaller --noconfirm --clean --windowed --name="WebFileDownloader" WebFileDownloader_v1.1.py
+
+    # 5. [핵심] 실행 권한 부여 및 임시 서명 (Ad-hoc Signing)
+    # 이 단계가 있어야 Mac(M1/M2 등)에서 '손상된 앱' 오류 없이 실행됨
+    - name: Sign App (Ad-hoc)
+      run: |
+        echo "Giving execution permissions..."
+        # 내부 실행 파일에 권한 부여 ('WebFileDownloader' 이름 주의)
+        chmod +x dist/WebFileDownloader.app/Contents/MacOS/WebFileDownloader
+        
+        echo "Applying ad-hoc signature..."
+        # 임시 서명 적용 (- 옵션은 ad-hoc 서명을 의미)
+        codesign --force --deep --sign - dist/WebFileDownloader.app
+
+    # 6. DMG 설치 파일 생성
+    - name: Create DMG
+      run: |
+        # 기존 파일이 있다면 삭제
+        rm -f dist/WebFileDownloader_v1.1.dmg
+
+        # DMG 패키징 실행
+        create-dmg \
+          --volname "WebFileDownloader Installer" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "WebFileDownloader.app" 200 190 \
+          --hide-extension "WebFileDownloader.app" \
+          --app-drop-link 600 185 \
+          "dist/WebFileDownloader_v1.1.dmg" \
+          "dist/WebFileDownloader.app"
+
+    # 7. 결과물 업로드 (Artifact)
+    - name: Upload DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: WebFileDownloader-Mac-Installer
+        path: dist/WebFileDownloader_v1.1.dmg
